@@ -1,0 +1,18 @@
+[package]
+name = "ruyi-slab"
+version = "0.1.0"
+authors = ["Agemo Cui <agemo.git.cui@gmail.com>"]
+edition = "2018"
+description = "An object based allocator"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/ruyi-slab"
+homepage = "https://github.com/ruyi-rs/slab"
+repository = "https://github.com/ruyi-rs/slab"
+readme = "README.md"
+keywords = ["slab", "allocator"]
+categories = ["memory-management", "data-structures"]
+include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
+
+[features]
+default = ["std"]
+std = []
