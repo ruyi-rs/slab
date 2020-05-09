@@ -1,8 +1,8 @@
 # Ruyi Slab
 
-[![ci](https://github.com/ruyi-rs/slab/workflows/ci/badge.svg)](https://github.com/ruyi-rs/slab/actions)
-[![license](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/ruyi-rs/slab)
-[![crates.io](https://img.shields.io/crates/v/ruyi-slab.svg)](https://crates.io/crates/ruyi-slab)
+[![release](https://github.com/ruyi-rs/slab/workflows/release/badge.svg)](https://github.com/ruyi-rs/slab/actions)
+[![license](https://img.shields.io/crates/l/ruyi-slab)](https://github.com/ruyi-rs/slab)
+[![crates.io](https://img.shields.io/crates/v/ruyi-slab)](https://crates.io/crates/ruyi-slab)
 [![docs](https://docs.rs/ruyi-slab/badge.svg)](https://docs.rs/ruyi-slab)
 
 An object based allocator backed by a contiguous growable array of slots.

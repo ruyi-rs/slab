@@ -1,12 +1,9 @@
 on:
   push:
-    branches:
-      - "*"
-  pull_request:
-    branches:
-      - "*"
+    tags:
+      - "v*"
 
-name: ci
+name: release
 
 jobs:
   fmt:
