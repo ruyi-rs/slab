@@ -38,140 +38,74 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use core::fmt;
-use core::mem::ManuallyDrop;
-use core::ops::{Deref, Index, IndexMut};
+use core::mem;
+use core::ops::{Index, IndexMut};
 
-#[derive(Copy, Clone)]
-struct Link {
-    n: usize,
+#[cfg(debug_assertions)]
+#[inline]
+fn unreachable() -> ! {
+    unreachable!()
 }
 
-impl Link {
-    // Vectors ensure they never allocate more than isize::MAX bytes.
-    // So it's safe to use usize::MAX >> 1 for invalid index.
-    const INVALID: usize = usize::MAX >> 1;
-    // left most bit: 0 - Free, 1 - Used
-    const USED: usize = !Self::INVALID;
-
-    #[inline]
-    const fn new() -> Self {
-        Self { n: Self::INVALID }
-    }
-
-    #[inline]
-    const fn used() -> Self {
-        Self { n: Self::USED }
-    }
-
-    #[inline]
-    fn is_null(index: usize) -> bool {
-        index == Self::INVALID
-    }
-
-    #[inline]
-    fn next(self) -> usize {
-        self.n
-    }
-
-    #[inline]
-    fn set_next(&mut self, next: usize) {
-        self.n = next;
-    }
-
-    #[inline]
-    fn is_free(self) -> bool {
-        (self.n & Self::USED) == 0
-    }
-
-    #[inline]
-    fn is_used(self) -> bool {
-        !self.is_free()
-    }
+#[cfg(not(debug_assertions))]
+unsafe fn unreachable() -> ! {
+    core::hint::unreachable_unchecked()
 }
 
-impl fmt::Debug for Link {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if Self::is_null(self.n) {
-            write!(f, "null")
-        } else {
-            write!(f, "{}", self.n)
-        }
-    }
-}
-
-struct Slot<T> {
-    link: Link,
-    obj: ManuallyDrop<T>,
+enum Slot<T> {
+    Used(T),
+    Free(usize),
 }
 
 impl<T> Slot<T> {
     #[inline]
-    const fn new(value: T) -> Self {
-        Self {
-            link: Link::used(),
-            obj: ManuallyDrop::new(value),
+    unsafe fn get_unchecked(&self) -> &T {
+        match self {
+            Slot::Used(obj) => obj,
+            Slot::Free(_) => unreachable(),
         }
     }
 
     #[inline]
-    unsafe fn get_unchecked(&self) -> &T {
-        &self.obj
+    unsafe fn get_unchecked_mut(&mut self) -> &mut T {
+        match self {
+            Slot::Used(obj) => obj,
+            Slot::Free(_) => unreachable(),
+        }
     }
 
     #[inline]
-    unsafe fn get_unchecked_mut(&mut self) -> &mut T {
-        &mut self.obj
+    unsafe fn get_free_unchecked(&self) -> usize {
+        match self {
+            Slot::Free(index) => *index,
+            Slot::Used(_) => unreachable(),
+        }
+    }
+
+    #[inline]
+    unsafe fn unwrap_unchecked(self) -> T {
+        match self {
+            Slot::Used(obj) => obj,
+            Slot::Free(_) => unreachable(),
+        }
+    }
+
+    #[inline]
+    unsafe fn take(&mut self, index: usize) -> T {
+        mem::replace(self, Slot::Free(index)).unwrap_unchecked()
     }
 
     #[inline]
     unsafe fn put(&mut self, obj: T) -> usize {
-        let next = self.next();
-        self.link = Link::used();
-        self.obj = ManuallyDrop::new(obj);
-        next
-    }
-
-    #[inline]
-    unsafe fn take(&mut self, next: usize) -> T {
-        let obj = ManuallyDrop::take(&mut self.obj);
-        self.link.set_next(next);
-        obj
-    }
-
-    #[inline]
-    fn is_free(&self) -> bool {
-        self.link.is_free()
-    }
-
-    #[inline]
-    fn is_used(&self) -> bool {
-        self.link.is_used()
-    }
-
-    #[inline]
-    fn next(&self) -> usize {
-        self.link.next()
+        mem::replace(self, Slot::Used(obj)).get_free_unchecked()
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Slot<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_free() {
-            write!(f, "Free({:?})", self.link)
-        } else {
-            write!(f, "Used({:?})", &self.obj.deref())
-        }
-    }
-}
-
-impl<T> Drop for Slot<T> {
-    #[inline]
-    fn drop(&mut self) {
-        if self.is_used() {
-            unsafe {
-                ManuallyDrop::drop(&mut self.obj);
-            }
+        match self {
+            Slot::Used(obj) => write!(f, "Used({:?}", obj),
+            Slot::Free(index) => write!(f, "Free({})", index),
         }
     }
 }
@@ -221,12 +155,14 @@ impl<T> Drop for Slot<T> {
 pub struct Slab<T> {
     slots: Vec<Slot<T>>,
     len: usize,
-    free: Link,
+    free: usize,
 }
 
 unsafe impl<T: Send> Send for Slab<T> {}
 
 impl<T> Slab<T> {
+    const NULL: usize = core::usize::MAX;
+
     /// Constructs a new empty `Slab<T>`.
     /// The allocator will not allocate until the first object is inserted.
     ///
@@ -241,7 +177,7 @@ impl<T> Slab<T> {
         Self {
             slots: Vec::new(),
             len: 0,
-            free: Link::new(),
+            free: Self::NULL,
         }
     }
 
@@ -279,7 +215,7 @@ impl<T> Slab<T> {
         Self {
             slots: Vec::with_capacity(capacity),
             len: 0,
-            free: Link::new(),
+            free: Self::NULL,
         }
     }
 
@@ -357,7 +293,7 @@ impl<T> Slab<T> {
         if self.len > 0 {
             self.slots.clear();
             self.len = 0;
-            self.free = Link::new();
+            self.free = Self::NULL;
         } else {
             unsafe {
                 self.slots.set_len(0);
@@ -444,12 +380,11 @@ impl<T> Slab<T> {
     pub fn insert(&mut self, obj: T) -> usize {
         let cur;
         if self.has_free_slots() {
-            cur = self.free.next();
-            let next = unsafe { self.slots.get_unchecked_mut(cur).put(obj) };
-            self.free.set_next(next);
+            cur = self.free;
+            self.free = unsafe { self.slots.get_unchecked_mut(cur).put(obj) };
         } else {
             cur = self.len;
-            self.slots.push(Slot::new(obj));
+            self.slots.push(Slot::Used(obj));
         }
         self.len += 1;
         cur
@@ -492,9 +427,9 @@ impl<T> Slab<T> {
     #[inline]
     pub fn remove(&mut self, index: usize) -> Option<T> {
         if let Some(slot) = self.slots.get_mut(index) {
-            if slot.is_used() {
-                let obj = unsafe { slot.take(self.free.next()) };
-                self.free.set_next(index);
+            if let Slot::Used(_) = slot {
+                let obj = unsafe { slot.take(self.free) };
+                self.free = index;
                 self.len -= 1;
                 return Some(obj);
             }
@@ -526,8 +461,8 @@ impl<T> Slab<T> {
     #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         if let Some(slot) = self.slots.get(index) {
-            if slot.is_used() {
-                return Some(&slot.obj);
+            if let Slot::Used(obj) = slot {
+                return Some(obj);
             }
         }
         None
@@ -556,8 +491,8 @@ impl<T> Slab<T> {
     #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if let Some(slot) = self.slots.get_mut(index) {
-            if slot.is_used() {
-                return Some(&mut slot.obj);
+            if let Slot::Used(obj) = slot {
+                return Some(obj);
             }
         }
         None
@@ -586,8 +521,8 @@ impl<T> Slab<T> {
     /// ```
     #[inline]
     pub unsafe fn remove_unchecked(&mut self, index: usize) -> T {
-        let obj = self.slots.get_unchecked_mut(index).take(self.free.next());
-        self.free.set_next(index);
+        let obj = self.slots.get_unchecked_mut(index).take(self.free);
+        self.free = index;
         self.len -= 1;
         obj
     }
@@ -656,13 +591,13 @@ impl<T> Slab<T> {
 
     #[inline]
     fn has_free_slots(&self) -> bool {
-        !Link::is_null(self.free.next())
+        self.free != Self::NULL
     }
 
     #[inline]
     fn next_free(&self) -> usize {
         if self.has_free_slots() {
-            self.free.next()
+            self.free
         } else {
             self.len
         }
