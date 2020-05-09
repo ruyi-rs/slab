@@ -1,6 +1,6 @@
 [package]
 name = "ruyi-slab"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Agemo Cui <agemo.git.cui@gmail.com>"]
 edition = "2018"
 description = "An object based allocator"
